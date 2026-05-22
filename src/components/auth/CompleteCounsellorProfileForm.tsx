@@ -5,10 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { toast } from "react-hot-toast";
-import { db, auth } from "@/lib/firebase";
-import { collection, query, where, getDocs, doc, setDoc, deleteDoc } from "firebase/firestore";
+import { auth } from "@/lib/firebase";
+import { getInvitedCounselorData, completeProfileAction } from "@/actions/profileActions";
 
 export function CompleteCounsellorProfileForm() {
   const router = useRouter();
@@ -22,82 +22,46 @@ export function CompleteCounsellorProfileForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const init = async () => {
-      const emailFromQuery = searchParams.get("email");
-      if (emailFromQuery) {
-        const emailDecoded = decodeURIComponent(emailFromQuery);
-        setEmail(emailDecoded);
+    const emailFromQuery = searchParams.get("email");
+    if (!emailFromQuery) return;
 
-        try {
-          const counselorsRef = collection(db, "counselors");
-          const q = query(counselorsRef, where("personalInfo.email", "==", emailDecoded));
-          const querySnapshot = await getDocs(q);
+    const decoded = decodeURIComponent(emailFromQuery);
+    setEmail(decoded);
 
-          if (!querySnapshot.empty) {
-            const data = querySnapshot.docs[0].data();
-            if (data.personalInfo?.fullName) {
-              setFullName(data.personalInfo.fullName);
-            }
-          }
-        } catch (error) {
-          console.error("Error fetching invite details:", error);
-        }
-      }
-    };
-
-    init();
+    getInvitedCounselorData(decoded).then(data => {
+      if (data?.fullName) setFullName(data.fullName);
+    });
   }, [searchParams]);
 
   const handleAddressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setAddress({ ...address, [e.target.name]: e.target.value });
+    setAddress(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    try {
-      const user = auth.currentUser;
-      if (!user) {
-        toast.error("You must be signed in to complete your profile.");
-        setIsSubmitting(false);
-        return;
-      }
-      // Find the invited counselor doc by email (if exists)
-      const counselorsRef = collection(db, "counselors");
-      const q = query(counselorsRef, where("personalInfo.email", "==", email));
-      const querySnapshot = await getDocs(q);
-      let invitedDocData = null;
-      if (!querySnapshot.empty) {
-        invitedDocData = querySnapshot.docs[0].data();
-      }
 
-      // Create or update the doc with UID as ID
-      const docRef = doc(db, "counselors", user.uid);
-      await setDoc(docRef, {
-        ...(invitedDocData || {}),
-        personalInfo: {
-          ...(invitedDocData?.personalInfo || {}),
-          fullName,
-          email,
-          phoneNumber,
-          address,
-        },
-        professionalInfo: {
-          ...(invitedDocData?.professionalInfo || {}),
-          occupation,
-        },
-        isVerified: false,
-        status: "Pending",
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      // Delete the invited doc if its ID is different from the UID
-      if (!querySnapshot.empty && querySnapshot.docs[0].id !== user.uid) {
-        await deleteDoc(doc(db, "counselors", querySnapshot.docs[0].id));
-      }
+    const user = auth.currentUser;
+    if (!user) {
+      toast.error("You must be signed in to complete your profile.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    const result = await completeProfileAction({
+      uid: user.uid,
+      email,
+      fullName,
+      phoneNumber,
+      address,
+      occupation,
+    });
+
+    if (result.success) {
       toast.success("Your profile has been submitted for review.");
       router.push("/profile-complete");
-    } catch (err) {
-      toast.error("Failed to update profile. Please try again.");
+    } else {
+      toast.error(result.message || "Failed to update profile. Please try again.");
       setIsSubmitting(false);
     }
   };
@@ -106,6 +70,7 @@ export function CompleteCounsellorProfileForm() {
     <Card className="w-full shadow-xl">
       <CardHeader>
         <CardTitle>Complete Your Profile</CardTitle>
+        <CardDescription>Fill in your details to submit your counselor application.</CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={handleSubmit}>
@@ -119,7 +84,7 @@ export function CompleteCounsellorProfileForm() {
           </div>
           <div>
             <Label>Address</Label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 mt-1">
               <Input name="street" placeholder="Street" value={address.street} onChange={handleAddressChange} required />
               <Input name="city" placeholder="City" value={address.city} onChange={handleAddressChange} required />
               <Input name="state" placeholder="State" value={address.state} onChange={handleAddressChange} required />
@@ -127,10 +92,12 @@ export function CompleteCounsellorProfileForm() {
             </div>
           </div>
           <div>
-            <Label htmlFor="occupation">Occupation</Label>
+            <Label htmlFor="occupation">Occupation / Specialization</Label>
             <Input id="occupation" value={occupation} onChange={e => setOccupation(e.target.value)} required />
           </div>
-          <Button type="submit" className="w-full" disabled={isSubmitting}>{isSubmitting ? "Submitting..." : "Submit Profile"}</Button>
+          <Button type="submit" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? "Submitting..." : "Submit Profile"}
+          </Button>
         </form>
       </CardContent>
     </Card>

@@ -1,9 +1,7 @@
 
 "use server";
 
-import { db } from "@/lib/firebase";
-import { doc, updateDoc, collection, writeBatch, getDocs, query, where } from "firebase/firestore";
-import { revalidatePath } from "next/cache";
+import { adminDb } from "@/lib/firebase-admin";
 import type { ActionResult } from "@/lib/types";
 
 export async function markNotificationAsRead(notificationId: string): Promise<ActionResult> {
@@ -11,17 +9,14 @@ export async function markNotificationAsRead(notificationId: string): Promise<Ac
     return { success: false, message: "Notification ID not provided." };
   }
   try {
-    const notificationRef = doc(db, "notifications", notificationId);
-    await updateDoc(notificationRef, { read: true });
-    // No path revalidation needed here as AppHeader uses onSnapshot for real-time updates
+    await adminDb.collection("notifications").doc(notificationId).update({ read: true });
     return { success: true, message: "Notification marked as read." };
   } catch (error) {
     console.error("Error marking notification as read:", error);
-    let errorMessage = "Failed to mark notification as read.";
-    if (error instanceof Error) {
-        errorMessage = `Failed to mark notification as read: ${error.message}`;
-    }
-    return { success: false, message: errorMessage };
+    return {
+      success: false,
+      message: `Failed to mark notification as read: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -30,20 +25,17 @@ export async function markAllNotificationsAsRead(notificationIds: string[]): Pro
     return { success: false, message: "No notification IDs provided to mark as read." };
   }
   try {
-    const batch = writeBatch(db);
+    const batch = adminDb.batch();
     notificationIds.forEach(id => {
-      const notificationRef = doc(db, "notifications", id);
-      batch.update(notificationRef, { read: true });
+      batch.update(adminDb.collection("notifications").doc(id), { read: true });
     });
     await batch.commit();
-    // No path revalidation needed here as AppHeader uses onSnapshot
     return { success: true, message: `${notificationIds.length} notifications marked as read.` };
   } catch (error) {
     console.error("Error marking all notifications as read:", error);
-    let errorMessage = "Failed to mark all notifications as read.";
-    if (error instanceof Error) {
-        errorMessage = `Failed to mark all notifications as read: ${error.message}`;
-    }
-    return { success: false, message: errorMessage };
+    return {
+      success: false,
+      message: `Failed to mark all notifications as read: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }

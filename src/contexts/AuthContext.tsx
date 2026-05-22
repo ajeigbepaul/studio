@@ -3,14 +3,15 @@
 
 import type { User, UserRole } from '@/lib/types';
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
-import { auth, db } from '@/lib/firebase'; // Import Firebase auth and db instance
-import { 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword, 
+import { auth, db } from '@/lib/firebase';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
   signOut as firebaseSignOut,
-  type User as FirebaseUser 
+  type User as FirebaseUser
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore'; // Import Firestore functions
+import { doc, getDoc } from 'firebase/firestore';
+import { ensureAdminRoleDoc } from '@/actions/userActions';
 
 interface AuthContextType {
   user: User | null;
@@ -66,19 +67,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             name: userName,
             email: firebaseUser.email || '',
             avatarUrl: firebaseUser.photoURL || undefined,
-            role: userRole, 
+            role: userRole,
           });
+
+          // Guarantee the adminRoles doc exists so Firestore client-SDK rules pass
+          if (['admin', 'superadmin'].includes(userRole)) {
+            ensureAdminRoleDoc(firebaseUser.uid).catch(console.error);
+          }
 
         } catch (error) {
           console.error("Error fetching user role from Firestore:", error);
-          // Fallback: set user without specific role or with a default one
+          const fallbackRole = (firebaseUser.email === process.env.NEXT_PUBLIC_SUPERADMIN_EMAIL ? 'superadmin' : 'admin') as UserRole;
           setUser({
             id: firebaseUser.uid,
             name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
             email: firebaseUser.email || '',
             avatarUrl: firebaseUser.photoURL || undefined,
-            role: (firebaseUser.email === process.env.NEXT_PUBLIC_SUPERADMIN_EMAIL ? 'superadmin' : 'admin') as UserRole, // Basic fallback
+            role: fallbackRole,
           });
+          ensureAdminRoleDoc(firebaseUser.uid).catch(console.error);
         }
       } else {
         setUser(null);

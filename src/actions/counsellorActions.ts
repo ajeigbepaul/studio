@@ -1,10 +1,20 @@
-
 "use server";
 
 import type { CounsellorStatus } from "@/lib/types";
 import { revalidatePath } from "next/cache";
-import { db, serverTimestamp } from "@/lib/firebase"; // Added serverTimestamp
-import { doc, updateDoc, getDoc, collection, addDoc } from "firebase/firestore"; // Added collection, addDoc
+import { adminDb, FieldValue } from "@/lib/firebase-admin";
+
+export async function deleteCounselorAction(counsellorId: string): Promise<{ success: boolean; message: string }> {
+  if (!counsellorId) return { success: false, message: "Counsellor ID not provided." };
+  try {
+    await adminDb.collection("counselors").doc(counsellorId).delete();
+    revalidatePath("/counsellors");
+    return { success: true, message: "Counsellor deleted successfully." };
+  } catch (error) {
+    console.error("Error deleting counsellor:", error);
+    return { success: false, message: `Failed to delete counsellor: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
 
 interface VerificationResult {
   success: boolean;
@@ -14,81 +24,53 @@ interface VerificationResult {
 }
 
 export async function updateCounsellorStatus(counsellorId: string, newStatus: CounsellorStatus): Promise<VerificationResult> {
-  console.log(`[Action] updateCounsellorStatus: Attempting to update counsellor. Received ID: '${counsellorId}', New Status: '${newStatus}'`);
-
-  if (!counsellorId || typeof counsellorId !== 'string' || counsellorId.trim() === "") {
-    console.error("[Action] updateCounsellorStatus: Invalid counsellorId received:", counsellorId);
-    return {
-      success: false,
-      message: "Invalid Counsellor ID provided to the update action.",
-      counsellorId,
-    };
+  if (!counsellorId || typeof counsellorId !== 'string' || !counsellorId.trim()) {
+    return { success: false, message: "Invalid Counsellor ID.", counsellorId };
   }
 
-  const trimmedCounsellorId = counsellorId.trim();
+  const id = counsellorId.trim();
 
   try {
-    const counsellorDocRef = doc(db, "counselors", trimmedCounsellorId);
-    console.log(`[Action] updateCounsellorStatus: Firestore document reference path being checked: ${counsellorDocRef.path}`);
-
-    const docSnap = await getDoc(counsellorDocRef);
-    if (!docSnap.exists()) {
-      console.error(`[Action] updateCounsellorStatus: Counsellor document with ID '${trimmedCounsellorId}' not found in 'counselors' collection. Path checked: ${counsellorDocRef.path}`);
-      return {
-        success: false,
-        message: `Counsellor with ID ${trimmedCounsellorId} not found. Please ensure the ID is correct and the document exists in the 'counselors' collection.`,
-        counsellorId: trimmedCounsellorId,
-      };
+    const docSnap = await adminDb.collection('counselors').doc(id).get();
+    if (!docSnap.exists) {
+      return { success: false, message: `Counsellor ${id} not found.`, counsellorId: id };
     }
-    const counsellorData = docSnap.data();
 
-    const updateData: { status: CounsellorStatus; isVerified?: boolean; updatedAt: any } = {
-      status: newStatus,
-      updatedAt: serverTimestamp(),
+    const data = docSnap.data()!;
+    const updatePayload: Record<string, unknown> = {
+      status:    newStatus,
+      updatedAt: FieldValue.serverTimestamp(),
     };
 
     if (newStatus === "Verified") {
-      updateData.isVerified = true;
-    } else if (newStatus === "Pending" || newStatus === "Rejected" || newStatus === "Invited") {
-      updateData.isVerified = false;
+      updatePayload.isVerified = true;
+    } else {
+      updatePayload.isVerified = false;
     }
 
-    await updateDoc(counsellorDocRef, updateData);
+    await adminDb.collection('counselors').doc(id).update(updatePayload);
 
-    // Create notification if status changes to "Pending"
     if (newStatus === "Pending") {
-      const notificationsRef = collection(db, "notifications");
-      await addDoc(notificationsRef, {
-        type: "counsellor_pending_verification",
-        title: "Counsellor Awaiting Verification",
-        message: `${counsellorData.personalInfo?.fullName || 'A counsellor'} is now pending verification.`,
-        link: `/counsellors?action=verify&id=${trimmedCounsellorId}`,
-        read: false,
-        timestamp: serverTimestamp(),
+      await adminDb.collection('notifications').add({
+        type:      "counsellor_pending_verification",
+        title:     "Counsellor Awaiting Verification",
+        message:   `${data.personalInfo?.fullName || 'A counsellor'} is now pending verification.`,
+        link:      `/counsellors?action=verify&id=${id}`,
+        read:      false,
+        timestamp: FieldValue.serverTimestamp(),
       });
     }
 
-    console.log(`[Action] updateCounsellorStatus: Counsellor '${trimmedCounsellorId}' status successfully updated to '${newStatus}' in Firestore.`);
     revalidatePath("/counsellors");
-    revalidatePath("/"); // For dashboard pending verifications card
-    // No path revalidation for /notifications as AppHeader uses onSnapshot
-    
-    return {
-      success: true,
-      message: `Counsellor status successfully updated to ${newStatus}.`,
-      counsellorId: trimmedCounsellorId,
-      newStatus,
-    };
+    revalidatePath("/");
+
+    return { success: true, message: `Counsellor status updated to ${newStatus}.`, counsellorId: id, newStatus };
   } catch (error) {
-    console.error(`[Action] updateCounsellorStatus: Failed to update counsellor '${trimmedCounsellorId}' status in Firestore:`, error);
-    let errorMessage = "Failed to update counsellor status in the database due to an unexpected error.";
-    if (error instanceof Error) {
-        errorMessage = `Failed to update counsellor status: ${error.message}`;
-    }
+    console.error(`Error updating counsellor ${id}:`, error);
     return {
       success: false,
-      message: errorMessage,
-      counsellorId: trimmedCounsellorId,
+      message: `Failed to update status: ${error instanceof Error ? error.message : String(error)}`,
+      counsellorId: id,
     };
   }
 }

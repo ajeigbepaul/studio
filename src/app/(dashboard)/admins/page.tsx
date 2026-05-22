@@ -1,71 +1,54 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { db } from "@/lib/firebase";
-import { collection, getDocs, query, orderBy, Timestamp, where, getCountFromServer } from "firebase/firestore";
+import { adminDb } from "@/lib/firebase-admin";
 import type { AppUser, UserRole } from "@/lib/types";
-import { UserList } from "@/components/admins/UserList"; 
+import { UserList } from "@/components/admins/UserList";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Users, UserPlus, Shield, UserCheck } from "lucide-react";
 import Link from "next/link";
 
+export const dynamic = 'force-dynamic';
+
 async function getUsers(): Promise<AppUser[]> {
   try {
-    const usersCol = collection(db, 'users');
-    // Query for users where role is 'admin', 'superadmin', or 'user'
-    const q = query(
-      usersCol, 
-      where("role", "in", ["admin", "superadmin", "user"] as UserRole[]), 
-      orderBy("createdAt", "desc")
-    );
-    const usersSnapshot = await getDocs(q);
-    const usersList = usersSnapshot.docs.map(doc => {
+    const snapshot = await adminDb
+      .collection('users')
+      .where('role', 'in', ['admin', 'superadmin', 'user'] as UserRole[])
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    return snapshot.docs.map(doc => {
       const data = doc.data();
-      
-      let createdAtString = new Date().toISOString(); // Fallback
-      if (data.createdAt && data.createdAt instanceof Timestamp) {
+      let createdAtString = new Date().toISOString();
+      if (data.createdAt?.toDate) {
         createdAtString = data.createdAt.toDate().toISOString();
-      } else if (typeof data.createdAt === 'string') {
-        try {
-          createdAtString = new Date(data.createdAt).toISOString();
-        } catch (e) {
-          // keep fallback
-        }
       }
-
-      // Ensure role is one of the expected types
-      const role = data.role as UserRole;
-
       return {
-        uid: doc.id,
-        email: data.email || 'N/A',
-        role: role, 
-        name: data.name || 'N/A', 
+        uid:       doc.id,
+        email:     data.email || 'N/A',
+        role:      data.role as UserRole,
+        name:      data.name || 'N/A',
         createdAt: createdAtString,
       } as AppUser;
     });
-    return usersList;
   } catch (error) {
     console.error("Error fetching users:", error);
-    return []; 
+    return [];
   }
 }
 
-async function getUserStats(): Promise<{ total: number; admins: number; users: number; superadmins: number }> {
+async function getUserStats() {
   try {
-    const usersCol = collection(db, 'users');
-    
-    const [totalSnapshot, adminSnapshot, userSnapshot, superadminSnapshot] = await Promise.all([
-      getCountFromServer(usersCol),
-      getCountFromServer(query(usersCol, where("role", "==", "admin"))),
-      getCountFromServer(query(usersCol, where("role", "==", "user"))),
-      getCountFromServer(query(usersCol, where("role", "==", "superadmin")))
+    const [total, admins, users, superadmins] = await Promise.all([
+      adminDb.collection('users').count().get(),
+      adminDb.collection('users').where('role', '==', 'admin').count().get(),
+      adminDb.collection('users').where('role', '==', 'user').count().get(),
+      adminDb.collection('users').where('role', '==', 'superadmin').count().get(),
     ]);
-
     return {
-      total: totalSnapshot.data().count,
-      admins: adminSnapshot.data().count,
-      users: userSnapshot.data().count,
-      superadmins: superadminSnapshot.data().count
+      total:       total.data().count,
+      admins:      admins.data().count,
+      users:       users.data().count,
+      superadmins: superadmins.data().count,
     };
   } catch (error) {
     console.error("Error fetching user stats:", error);
@@ -74,20 +57,14 @@ async function getUserStats(): Promise<{ total: number; admins: number; users: n
 }
 
 export default async function UserManagementPage() {
-  const [users, userStats] = await Promise.all([
-    getUsers(),
-    getUserStats()
-  ]);
+  const [users, userStats] = await Promise.all([getUsers(), getUserStats()]);
 
   return (
     <div className="space-y-8">
-      {/* Header with stats and quick action */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold mb-2">Admin management</h1>
-          <p className="text-muted-foreground">
-            Manage user roles, permissions, and system access.
-          </p>
+          <p className="text-muted-foreground">Manage user roles, permissions, and system access.</p>
         </div>
         <Link href="/invite?userType=admin">
           <Button className="bg-primary text-white">
@@ -97,9 +74,8 @@ export default async function UserManagementPage() {
         </Link>
       </div>
 
-      {/* User statistics */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="cursor-pointer hover:shadow-md transition-shadow">
+        <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -110,8 +86,7 @@ export default async function UserManagementPage() {
             </div>
           </CardContent>
         </Card>
-        
-        <Card className="cursor-pointer hover:shadow-md transition-shadow">
+        <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -122,8 +97,7 @@ export default async function UserManagementPage() {
             </div>
           </CardContent>
         </Card>
-        
-        <Card className="cursor-pointer hover:shadow-md transition-shadow">
+        <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -134,8 +108,7 @@ export default async function UserManagementPage() {
             </div>
           </CardContent>
         </Card>
-        
-        <Card className="cursor-pointer hover:shadow-md transition-shadow">
+        <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -148,7 +121,6 @@ export default async function UserManagementPage() {
         </Card>
       </div>
 
-      {/* User list */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -156,7 +128,7 @@ export default async function UserManagementPage() {
             System Users
           </CardTitle>
           <CardDescription>
-            Manage user accounts, roles, and permissions. Click on any user to view details or perform actions.
+            Manage user accounts, roles, and permissions.
           </CardDescription>
         </CardHeader>
         <CardContent>

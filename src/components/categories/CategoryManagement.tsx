@@ -2,22 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
-import {
-  collection,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  doc,
-  getDocs,
-  query,
-  orderBy,
-  where,
-} from "firebase/firestore";
+import { collection, getDocs, query, orderBy } from "firebase/firestore";
+// reads use client SDK (authenticated user); mutations go through server actions
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "react-hot-toast";
+import { createCategoryAction, updateCategoryAction, deleteCategoryAction } from "@/actions/categoryActions";
 
 export interface AdminCategory {
   id?: string;
@@ -46,7 +38,7 @@ export function CategoryManagement() {
   const load = async () => {
     try {
       setIsLoading(true);
-      const snap = await getDocs(query(collection(db, "categories"), orderBy("order")));
+      const snap = await getDocs(query(collection(db, "categories"), orderBy("name")));
       setCategories(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
     } catch (e) {
       console.error("Load categories failed", e);
@@ -61,39 +53,30 @@ export function CategoryManagement() {
   }, []);
 
   const createCategory = async () => {
-    try {
-      if (!form.name.trim()) {
-        toast.error("Please enter a category name");
-        return;
-      }
-      await addDoc(collection(db, "categories"), form);
+    if (!form.name.trim()) { toast.error("Please enter a category name"); return; }
+    const result = await createCategoryAction(form);
+    if (result.success) {
       setForm({ ...emptyForm });
       await load();
       toast.success("Category created");
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to create category");
+    } else {
+      toast.error(result.message);
     }
   };
 
   const saveCategory = async (c: AdminCategory) => {
-    try {
-      await updateDoc(doc(db, "categories", c.id!), c as any);
-      toast.success(`Saved ${c.name}`);
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to save category");
-    }
+    const result = await updateCategoryAction(c.id!, c);
+    if (result.success) toast.success(result.message);
+    else toast.error(result.message);
   };
 
   const removeCategory = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, "categories", id));
+    const result = await deleteCategoryAction(id);
+    if (result.success) {
       setCategories((prev) => prev.filter((x) => x.id !== id));
-      toast.success("Category removed");
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to delete category");
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
     }
   };
 

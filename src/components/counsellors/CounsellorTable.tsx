@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useTransition, useEffect, useMemo } from "react";
+import { useState, useTransition, useEffect, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -24,9 +24,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSearchParams, useRouter } from 'next/navigation';
-import { deleteDoc, doc } from "firebase/firestore";
 import { toast } from "react-hot-toast";
-import { db } from "@/lib/firebase";
+import { deleteCounselorAction } from "@/actions/counsellorActions";
 import { ConfirmModal } from "../shared/ConfirmModal";
 
 interface CounsellorTableProps {
@@ -85,20 +84,18 @@ export function CounsellorTable({ initialCounsellors }: CounsellorTableProps) {
     setIsConfirmOpen(true);
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = () => {
     if (!counsellorIdToDelete) return;
-
     setIsConfirmOpen(false);
     startTransition(async () => {
-      try {
-        await deleteDoc(doc(db, "counselors", counsellorIdToDelete));
+      const result = await deleteCounselorAction(counsellorIdToDelete);
+      if (result.success) {
         setCounsellors(prev => prev.filter(c => c.id !== counsellorIdToDelete));
-        toast.success("Counsellor deleted successfully.");
-      } catch (err) {
-        toast.error("Failed to delete counsellor.");
-      } finally {
-        setCounsellorIdToDelete(null);
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
       }
+      setCounsellorIdToDelete(null);
     });
   };
 

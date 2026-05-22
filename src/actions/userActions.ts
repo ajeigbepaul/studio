@@ -1,54 +1,48 @@
-
 "use server";
 
-import { db, serverTimestamp } from "@/lib/firebase";
-import { doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
+import { adminDb, adminAuth, FieldValue } from "@/lib/firebase-admin";
 import type { UserRole } from "@/lib/types";
 import { revalidatePath } from "next/cache";
+
+export async function ensureAdminRoleDoc(uid: string): Promise<void> {
+  if (!uid) return;
+  const ref = adminDb.collection("adminRoles").doc(uid);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    await ref.set({ createdAt: FieldValue.serverTimestamp() });
+  }
+}
 
 interface ActionResult {
   success: boolean;
   message: string;
 }
 
-// This action is specifically for setting the initial superadmin role.
 export async function setSuperAdminRole(uid: string, email: string): Promise<ActionResult> {
   if (email !== process.env.NEXT_PUBLIC_SUPERADMIN_EMAIL) {
     return { success: false, message: "Unauthorized: Email does not match designated superadmin email." };
   }
 
   try {
-    const usersRef = collection(db, "users");
-    
-    const q = query(usersRef, where("role", "==", "superadmin"));
-    const querySnapshot = await getDocs(q);
-
-    if (!querySnapshot.empty) {
-      let superadminExistsForOtherUser = false;
-      querySnapshot.forEach((doc) => {
-        if (doc.id !== uid) {
-          superadminExistsForOtherUser = true;
-        }
-      });
-      if (superadminExistsForOtherUser) {
-         return { success: false, message: "A superadmin account already exists for a different user." };
+    const existing = await adminDb.collection('users').where('role', '==', 'superadmin').get();
+    for (const doc of existing.docs) {
+      if (doc.id !== uid) {
+        return { success: false, message: "A superadmin account already exists for a different user." };
       }
     }
-    
-    const userDocRef = doc(db, "users", uid);
-    await setDoc(userDocRef, {
-      email: email,
-      role: "superadmin" as UserRole,
-      createdAt: serverTimestamp(),
-      uid: uid,
-    }, { merge: true }); 
 
-    console.log(`Superadmin role set for UID: ${uid}`);
+    await adminDb.collection('users').doc(uid).set(
+      { email, role: 'superadmin' as UserRole, uid, createdAt: FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+
+    // Sync custom claim
+    await adminAuth.setCustomUserClaims(uid, { role: 'superadmin' });
+
     return { success: true, message: "Superadmin role configured successfully." };
-
   } catch (error) {
     console.error("Error setting superadmin role:", error);
-    return { success: false, message: "Failed to configure superadmin role in database." };
+    return { success: false, message: "Failed to configure superadmin role." };
   }
 }
 
@@ -57,33 +51,28 @@ export async function deleteAppUser(uid: string): Promise<ActionResult> {
     return { success: false, message: "User ID not provided." };
   }
 
-  // Prevent deletion of the superadmin account
   const superAdminEmail = process.env.NEXT_PUBLIC_SUPERADMIN_EMAIL;
   if (superAdminEmail) {
-    const userDocRef = doc(db, "users", uid);
-    const userDoc = await getDoc(userDocRef);
-    if (userDoc.exists() && userDoc.data().email === superAdminEmail) {
+    const userDoc = await adminDb.collection('users').doc(uid).get();
+    if (userDoc.exists && userDoc.data()?.email === superAdminEmail) {
       return { success: false, message: "Superadmin account cannot be deleted through this panel." };
     }
   }
 
   try {
-    const userDocRef = doc(db, "users", uid);
-    await deleteDoc(userDocRef);
+    await adminDb.collection('users').doc(uid).delete();
+
+    // Also delete Firebase Auth user
+    try {
+      await adminAuth.deleteUser(uid);
+    } catch (authErr) {
+      console.warn(`Firestore doc deleted but Auth user ${uid} could not be removed:`, authErr);
+    }
 
     revalidatePath("/admins");
-    // TODO: Implement Firebase Authentication user deletion.
-    // This typically requires Firebase Admin SDK in a trusted backend environment (e.g., Cloud Function).
-    // Example: admin.auth().deleteUser(uid);
-    // For now, only the Firestore record is deleted.
-    console.log(`User document ${uid} deleted from Firestore.`);
-    return { success: true, message: "User removed successfully from the application list. Note: Firebase Auth record may still exist." };
+    return { success: true, message: "User removed successfully." };
   } catch (error) {
-    console.error(`Error deleting user ${uid} from Firestore:`, error);
-    let errorMessage = "Failed to delete user from database.";
-    if (error instanceof Error) {
-        errorMessage = `Failed to delete user: ${error.message}`;
-    }
-    return { success: false, message: errorMessage };
+    console.error(`Error deleting user ${uid}:`, error);
+    return { success: false, message: `Failed to delete user: ${error instanceof Error ? error.message : String(error)}` };
   }
 }

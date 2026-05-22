@@ -19,22 +19,10 @@ import {
   UserCheck,
   LogOut,
   UserCog,
-  UserPlus,
-  ShieldAlert,
-  MessageSquare,
-  Settings,
 } from "lucide-react";
 
-// NEW IMPORTS for Firestore
-import React, { useState, useEffect } from "react";
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  query,
-  where,
-  getCountFromServer,
-} from "firebase/firestore";
-import type { CounsellorStatus } from "@/lib/types";
+import { useState, useEffect } from "react";
+import { getSidebarCounts } from "@/actions/sidebarActions";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -84,46 +72,13 @@ export function AppSidebar() {
 
   useEffect(() => {
     const fetchCounts = async () => {
-      try {
-        // Fetch pending counsellors count
-        const counsellorsCol = collection(db, "counselors");
-        const counsellorsQuery = query(
-          counsellorsCol,
-          where("status", "in", ["Pending", "Invited"] as CounsellorStatus[])
-        );
-        const counsellorsSnapshot = await getCountFromServer(counsellorsQuery);
-        setPendingCounsellorsActualCount(counsellorsSnapshot.data().count);
-
-        // Fetch flagged content count
-        const postsCol = collection(db, "posts");
-        const postsQuery = query(
-          postsCol,
-          where("moderationStatus", "==", "flagged")
-        );
-        const postsSnapshot = await getCountFromServer(postsQuery);
-
-        const messagesCol = collection(db, "messages");
-        const messagesQuery = query(
-          messagesCol,
-          where("moderationStatus", "==", "flagged")
-        );
-        const messagesSnapshot = await getCountFromServer(messagesQuery);
-
-        setFlaggedContentCount(
-          postsSnapshot.data().count + messagesSnapshot.data().count
-        );
-      } catch (error) {
-        console.error("Error fetching counts for sidebar badges:", error);
-        setPendingCounsellorsActualCount(0);
-        setFlaggedContentCount(0);
-      }
+      const counts = await getSidebarCounts();
+      setPendingCounsellorsActualCount(counts.pendingCounsellors);
+      setFlaggedContentCount(counts.flaggedContent);
     };
 
     fetchCounts();
-
-    // Set up an interval to refresh the counts every 5 minutes
     const intervalId = setInterval(fetchCounts, 5 * 60 * 1000);
-
     return () => clearInterval(intervalId);
   }, []);
 
@@ -178,19 +133,20 @@ export function AppSidebar() {
         <SidebarMenu>
           {filteredNavItems.map((item) => (
             <SidebarMenuItem key={item.href}>
-              <Link href={item.href} passHref legacyBehavior>
-                <SidebarMenuButton
-                  isActive={
-                    pathname === item.href ||
-                    (item.href !== "/" && pathname.startsWith(item.href))
-                  }
-                  tooltip={{
-                    children: item.label,
-                    className:
-                      "bg-sidebar-accent text-sidebar-accent-foreground border-sidebar-border",
-                  }}
-                  className="justify-start"
-                >
+              <SidebarMenuButton
+                asChild
+                isActive={
+                  pathname === item.href ||
+                  (item.href !== "/" && pathname.startsWith(item.href))
+                }
+                tooltip={{
+                  children: item.label,
+                  className:
+                    "bg-sidebar-accent text-sidebar-accent-foreground border-sidebar-border",
+                }}
+                className="justify-start"
+              >
+                <Link href={item.href}>
                   <item.icon className="h-5 w-5" />
                   <span className="group-data-[collapsible=icon]:hidden">
                     {item.label}
@@ -201,8 +157,8 @@ export function AppSidebar() {
                         {badges[item.badgeKey as keyof typeof badges]}
                       </SidebarMenuBadge>
                     )}
-                </SidebarMenuButton>
-              </Link>
+                </Link>
+              </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
